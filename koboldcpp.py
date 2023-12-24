@@ -11,7 +11,7 @@
 import ctypes
 import os
 import argparse
-import json, sys, http.server, time, asyncio, socket, threading
+import json, sys, http.server, time, asyncio, socket, threading, ipaddress, urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 
 sampler_order_max = 7
@@ -962,14 +962,47 @@ Enter Prompt:<br>
         self.end_headers(content_type='text/html')
 
     def end_headers(self, content_type=None):
-        self.send_header('access-control-allow-origin', '*')
-        self.send_header('access-control-allow-methods', '*')
-        self.send_header('access-control-allow-headers', '*, Accept, Content-Type, Content-Length, Cache-Control, Accept-Encoding, X-CSRF-Token, Client-Agent, X-Fields, Content-Type, Authorization, X-Requested-With, X-HTTP-Method-Override, apikey, genkey')
+        # Add CORS headers if this request is coming from a local network IP or loopback, or if it's
+        # on the list of allowed hosts.
+        origin = self.headers.get('Origin')
+        if origin:
+            origin_host = urllib.parse.urlparse(origin).hostname.lower()
+            if self._check_access(origin_host):
+                self.send_header('access-control-allow-origin', '*')
+                self.send_header('access-control-allow-methods', '*')
+                self.send_header('access-control-allow-headers', '*, Accept, Content-Type, Content-Length, Cache-Control, Accept-Encoding, X-CSRF-Token, Client-Agent, X-Fields, Content-Type, Authorization, X-Requested-With, X-HTTP-Method-Override, apikey, genkey')
+            else:
+                # TODO: point at the relevant setting here once it's implemented so people know where to go
+                raise Exception(f"Request from origin '{origin}' is not allowed.")
+
         self.send_header("cache-control", "no-store")
         if content_type is not None:
             self.send_header('content-type', content_type)
         return super(ServerRequestHandler, self).end_headers()
 
+    def _check_access(self, host):
+        """
+        Return true if the given origin hostname or IP is permitted to access the API.
+
+        ip is an IP on the local network, the loopback address, or localhost.
+        """
+        # Always allow hosts allowed by the user.
+        allowed_hosts = [] # TODO
+        if host in allowed_hosts:
+            return True
+
+        # Always allow localhost.
+        if host == "localhost":
+            return True
+
+        # Always allow local network IPs.
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            # This isn't an IP.
+            return False
+
+        return ip.is_private or ip.is_loopback
 
 def RunServerMultiThreaded(addr, port, embedded_kailite = None, embedded_kcpp_docs = None):
     global exitcounter
